@@ -86,7 +86,7 @@ tables here and in the paper.
 | pairs  | 0.08 (groups-cpu) | 0.5     |
 
 Reading (honest): the planner routes each circuit to its best backend.
-Dense circuits (QFT/QAOA/random): qubit 4-7x faster than Qrack. Pairs:
+Dense circuits (QFT/QAOA/random): qubit 3.5-6x faster than Qrack. Pairs:
 qubit factors it (groups) and beats Qrack. GHZ: qubit's ZERO tier gives
 20ms/1MB (down from 1450ms dense) but Qrack's stabilizer tableau is
 asymptotically optimal for Clifford states and wins; we don't implement
