@@ -11,6 +11,10 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
+#include <vector>
+#include <algorithm>
+#include <thread>
+#include <chrono>
 
 using namespace qubit;
 
@@ -45,10 +49,9 @@ static Circuit randc(int n, int depth, uint64_t seed) {
 	return c;
 }
 
-static double gate_only_ms(const Circuit& c) {
-	int n = c.num_qubits();
+static double one_shot_ms(const Circuit& c) {
 	auto be = make_dense_gpu();
-	be->init(n);
+	be->init(c.num_qubits());
 	cudaEvent_t s, e; cudaEventCreate(&s); cudaEventCreate(&e);
 	cudaDeviceSynchronize();
 	cudaEventRecord(s);
@@ -56,14 +59,36 @@ static double gate_only_ms(const Circuit& c) {
 	cudaEventRecord(e);
 	cudaEventSynchronize(e);
 	float ms = 0; cudaEventElapsedTime(&ms, s, e);
+	cudaEventDestroy(s); cudaEventDestroy(e);
 	return ms;
 }
 
-int main() {
+/*
+ * Thermal-throttling defense without clock control (which needs admin):
+ * run many reps with a cooldown between each and report the MINIMUM.
+ * Throttling only ever slows a run down, so the fastest observed time is
+ * the one least affected by it -- the closest estimate of unthrottled
+ * kernel speed. Median and max show the spread.
+ */
+static void bench(const char* name, const Circuit& c, int reps, int cooldown_ms) {
+	one_shot_ms(c);   /* warm up, discarded */
+	std::vector<double> t;
+	for (int r = 0; r < reps; r++) {
+		t.push_back(one_shot_ms(c));
+		std::this_thread::sleep_for(std::chrono::milliseconds(cooldown_ms));
+	}
+	std::sort(t.begin(), t.end());
+	printf("%s,%d,%.2f,%.2f,%.2f\n", name, c.num_qubits(),
+	       t.front(), t[t.size()/2], t.back());
+}
+
+int main(int argc, char** argv) {
 	int n = 28;
-	printf("circuit,qubits,qubit_gate_only_ms\n");
-	printf("qft,%d,%.2f\n", n, gate_only_ms(qft(n)));
-	printf("qaoa4,%d,%.2f\n", n, gate_only_ms(qaoa(n, 4)));
-	printf("random,%d,%.2f\n", n, gate_only_ms(randc(n, 10, 42)));
+	int reps = (argc > 1) ? std::atoi(argv[1]) : 15;
+	int cd = (argc > 2) ? std::atoi(argv[2]) : 1500;   /* ms cooldown */
+	printf("circuit,qubits,min_ms,median_ms,max_ms\n");
+	bench("qft", qft(n), reps, cd);
+	bench("qaoa4", qaoa(n, 4), reps, cd);
+	bench("random", randc(n, 10, 42), reps, cd);
 	return 0;
 }

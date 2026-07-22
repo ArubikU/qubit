@@ -96,20 +96,22 @@ Run: `QRACK_OCL_DEFAULT_DEVICE=0 py bench/qrack_bench.py 28`.
 
 ## Kernel-only (gate application, no read-back) — rebuts apples-to-oranges
 
-Fair kernel-vs-kernel at 28q: qubit gate-application time (CUDA events,
-excludes init + read-back) vs Aer internal result.time_taken (excludes
-Python + read-back). qubit fusion OFF here (conservative).
+Fair kernel-vs-kernel at 28q: qubit gate-application (CUDA events, no
+init/read-back, median of 20 COOLED runs to neutralize laptop throttling
+since clock-lock needs admin) vs Aer internal result.time_taken (best of
+3, favors Aer). qubit fusion OFF (conservative).
 
-| 28q    | qubit gate-only | Aer-GPU internal | ratio |
-|--------|-----------------|------------------|-------|
-| QFT    | 3,742           | 12,284           | 3.3x  |
-| QAOA-4 | 4,997           | 21,108           | 4.2x  |
-| random | 4,863           | 26,424           | 5.4x  |
+| 28q    | qubit median [min,max]    | Aer-GPU internal | ratio |
+|--------|---------------------------|------------------|-------|
+| QFT    | 3,755 [3,741, 3,805]      | 12,324           | 3.3x  |
+| QAOA-4 | 8,711 [6,199, 8,881]      | 21,360           | 2.5x  |
+| random | 8,514 [8,205, 9,041]      | 23,575           | 2.8x  |
 
-qubit is 3.3-5.4x faster even with all framework/read-back overhead
-removed from both sides -> the end-to-end win is not a WSL2/Python
-artifact. Gap >3x exceeds the ~2x thermal variance and reproduces on T4.
-Run: bench/kernel_bench.cu (qubit), aer_gpu_one.py col 7 (Aer internal).
+qubit 2.5-3.3x faster at median; even qubit's SLOWEST run beats Aer's
+BEST by >=2.4x, so the gap survives the ~2x thermal variance. The
+end-to-end win is not a WSL2/Python artifact. NOTE: earlier single-shot
+numbers (4997/4863) were boost-inflated (back-to-back, no cooldown); the
+cooled median is the honest figure. Run: bench/kernel_bench.cu 20 1500.
 
 ## Cross-architecture (Tesla T4, Turing sm_75, free cloud)
 
