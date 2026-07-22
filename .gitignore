@@ -1,0 +1,16 @@
+# build outputs
+bin/
+*.exe
+*.obj
+*.exp
+*.lib
+*.pdb
+
+# not part of the public deliverable
+paper/
+cpu/
+gpu/
+*.tmp
+
+# benchmark scratch (keep results/ CSVs, drop stray files)
+bench/results/*.tmp
