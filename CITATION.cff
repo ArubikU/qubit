@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "qubit: VRAM-Resident Tiered Compression for Quantum Circuit Simulation on Consumer GPUs"
+abstract: >-
+  A GPU quantum circuit simulator whose state vector is partitioned into
+  blocks stored in one of three tiers (ZERO / block-scaled int16
+  COMPRESSED / complex64 FULL), resident entirely in VRAM. An a-priori
+  L2 fidelity budget bounds compression error by construction, and an
+  automatic planner routes each circuit to the cheapest of dense,
+  entanglement-factorized, and tiered-block backends from static
+  analysis. Runs circuits beyond the dense qubit ceiling of a 6 GB
+  consumer GPU, natively on Windows.
+type: software
+authors:
+  - given-names: "Piero Jose"
+    family-names: "Alarcon Dueñas"
+    orcid: "https://orcid.org/0009-0008-7075-5501"
+    country: PE
+repository-code: "https://github.com/ArubikU/qubit"
+url: "https://github.com/ArubikU/qubit"
+license: MIT
+version: "1.0.0"
+date-released: "2026-07-21"
+keywords:
+  - quantum circuit simulation
+  - GPU
+  - CUDA
+  - state vector
+  - lossy compression
+  - consumer hardware
+  - high-performance computing
