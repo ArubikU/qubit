@@ -90,18 +90,18 @@ Run: `QRACK_OCL_DEFAULT_DEVICE=0 py bench/qrack_bench.py 28`.
 ## Cross-architecture (Tesla T4, Turing sm_75, free cloud)
 
 Same suite on a Tesla T4 (16 GB) confirms the method is not tied to the
-3060. Correctness identical (50 GPU-vs-CPU trials, 25 exact + 25 lossy
-all pass); GHZ-31 exact in 1 MB; 28q echo fidelity 0.9998 with memory
-halving at full compression. Dense times ~1.3-1.8x slower than the 3060
-(older card), same qualitative behavior.
+3060. Correctness identical (50 GPU-vs-CPU trials + 25 exact + 25 lossy
+all pass via bench/colab_m6.sh); GHZ-31 exact in 1 MB; 28q echo
+fidelity 0.9998 with memory halving at full compression. Dense times
+~1.4-2x slower than the 3060 (older card), same qualitative behavior.
 
 | 28q dense | RTX 3060 | Tesla T4 |
 |-----------|----------|----------|
-| QFT       | 4,516    | 6,048    |
-| QAOA-4    | 3,160    | 4,956    |
-| random    | 3,490    | 4,760    |
-| GHZ       | 1,619    | 2,898    |
-| pairs     | 1,600    | 2,787    |
+| QFT       | 4,290    | 6,048    |
+| QAOA-4    | 3,935    | 4,956    |
+| random    | 4,159    | 4,760    |
+| GHZ       | 1,450    | 2,898    |
+| pairs     | 1,526    | 2,787    |
 
 ## Capacity ceiling (6 GB VRAM)
 
@@ -124,9 +124,10 @@ COMPRESSED).
 
 | n  | budget | time   | peak state (dense f32) | echo fidelity |
 |----|--------|--------|------------------------|---------------|
-| 28 | 0.5    | 9.9 s  | 2048 MB (2048 MB)      | 0.999794      |
-| 29 | 10     | 143 s  | 2048 MB (4096 MB)      | 0.999799      |
-| 31 (GHZ) | 0 | <1 s | 1 MB (16384 MB)        | exact         |
+| 28 | 2 (full compress) | 9.9 s | 1024 MB (2048 MB) | 0.999788    |
+| 28 | 0.5 (partial)     | 9.9 s | 2048 MB (2048 MB) | 0.999794    |
+| 29 | 10 (full compress)| 143 s | 2048 MB (4096 MB) | 0.999799    |
+| 31 (GHZ) | 0 (exact ZERO)| <1 s | 1 MB (16384 MB)   | exact        |
 
 - 29 qubits: the full uniform state lives int16-compressed in half the
   dense footprint; dense f32 would still fit this card, but at 30
