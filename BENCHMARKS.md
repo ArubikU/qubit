@@ -61,6 +61,29 @@ Aer, Python/result-object overhead a C++ engine avoids), not isolated
 kernel throughput. Read as user-visible single-run latency, not a
 cuStateVec kernel comparison.
 
+## vs Qrack (closest peer, same RTX 3060)
+
+Qrack is structure-aware (Schmidt decomposition + stabilizer), so
+low-entanglement states never densify. Times below are Qrack
+gate-application only (excludes read-back, favoring Qrack).
+
+| 28q    | qubit-GPU | Qrack   | regime     |
+|--------|-----------|---------|------------|
+| QFT    | 4,516     | 18,953  | dense      |
+| QAOA-4 | 3,160     | 13,665  | dense      |
+| random | 3,490     | 24,189  | dense      |
+| GHZ    | 1,619     | 0.4     | structured |
+| pairs  | 1,600     | 0.5     | structured |
+
+Reading (honest): on structured circuits Qrack is ~1000x+ faster than
+any dense method (it stores almost nothing) — so qubit's ZERO-tier /
+groups results (GHZ-31 in 1MB, 80q clusters) are NOT a differentiator;
+MPS/stabilizer/Qrack all handle these. qubit's real contribution is the
+DENSE regime (QFT/QAOA/random), where no structure exists to exploit,
+structure-aware methods gain nothing, and qubit is 4-7x faster than
+Qrack AND compresses the dense state under a fidelity budget. Run:
+`QRACK_OCL_DEFAULT_DEVICE=0 py bench/qrack_bench.py 28`.
+
 ## Cross-architecture (Tesla T4, Turing sm_75, free cloud)
 
 Same suite on a Tesla T4 (16 GB) confirms the method is not tied to the
