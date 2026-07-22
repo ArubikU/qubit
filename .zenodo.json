@@ -1,0 +1,22 @@
+{
+  "title": "qubit: Beyond the Dense Ceiling — VRAM-Resident Tiered Compression for Quantum Circuit Simulation on Consumer GPUs",
+  "description": "A GPU quantum circuit simulator whose state vector is partitioned into blocks stored in one of three tiers (ZERO / block-scaled int16 COMPRESSED / complex64 FULL), resident entirely in VRAM. An a-priori L2 fidelity budget bounds compression error by construction; an automatic planner routes each circuit to the cheapest of dense, entanglement-factorized, and tiered-block backends from static analysis. Runs quantum circuits beyond the dense qubit ceiling of a 6 GB consumer GPU (31-qubit GHZ exactly in 1 MB; 29-qubit dense circuits at measured fidelity 0.9998), natively on Windows.",
+  "license": "MIT",
+  "upload_type": "software",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Alarcon Duenas, Piero Jose",
+      "orcid": "0009-0008-7075-5501"
+    }
+  ],
+  "keywords": [
+    "quantum circuit simulation",
+    "GPU",
+    "CUDA",
+    "state vector",
+    "lossy compression",
+    "consumer hardware",
+    "high-performance computing"
+  ]
+}
