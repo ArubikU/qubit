@@ -25,6 +25,13 @@ try:
     sv = res.get_statevector()
     p0 = abs(sv[0]) ** 2
     b = 8 if prec == "single" else 16
-    print(f"{which},{n},aer-sv-gpu-{prec},{dt:.2f},{(2**n)*b},{p0:.6f}", flush=True)
+    # result.time_taken is Aer's internal simulation wall time, excluding
+    # Python-side overhead and the get_statevector read-back -> kernel-fair
+    try:
+        internal_ms = res.results[0].time_taken * 1000.0
+    except Exception:
+        internal_ms = float("nan")
+    print(f"{which},{n},aer-sv-gpu-{prec},{dt:.2f},{(2**n)*b},{p0:.6f},{internal_ms:.2f}",
+          flush=True)
 except Exception as e:
     print(f"{which},{n},FAIL,{type(e).__name__}: {str(e)[:120]}", flush=True)

@@ -94,6 +94,23 @@ a stabilizer backend. Net: qubit wins 4 of 5; the loss is pure-Clifford
 GHZ. Core contribution stays the DENSE regime (no structure to exploit).
 Run: `QRACK_OCL_DEFAULT_DEVICE=0 py bench/qrack_bench.py 28`.
 
+## Kernel-only (gate application, no read-back) — rebuts apples-to-oranges
+
+Fair kernel-vs-kernel at 28q: qubit gate-application time (CUDA events,
+excludes init + read-back) vs Aer internal result.time_taken (excludes
+Python + read-back). qubit fusion OFF here (conservative).
+
+| 28q    | qubit gate-only | Aer-GPU internal | ratio |
+|--------|-----------------|------------------|-------|
+| QFT    | 3,742           | 12,284           | 3.3x  |
+| QAOA-4 | 4,997           | 21,108           | 4.2x  |
+| random | 4,863           | 26,424           | 5.4x  |
+
+qubit is 3.3-5.4x faster even with all framework/read-back overhead
+removed from both sides -> the end-to-end win is not a WSL2/Python
+artifact. Gap >3x exceeds the ~2x thermal variance and reproduces on T4.
+Run: bench/kernel_bench.cu (qubit), aer_gpu_one.py col 7 (Aer internal).
+
 ## Cross-architecture (Tesla T4, Turing sm_75, free cloud)
 
 Same suite on a Tesla T4 (16 GB) confirms the method is not tied to the
