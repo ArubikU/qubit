@@ -47,13 +47,16 @@ End-to-end single-shot with state retrieval. qubit-GPU and Aer-GPU both
 complex64 on the same RTX 3060; Aer-GPU via WSL2 (qiskit-aer-gpu 0.15.1,
 cuStateVec). Aer-GPU-fp64 is Aer's default complex128 (4 GB at 28q).
 
+qubit GPU column is the dense-forced backend (dense-vs-dense); the
+planner would auto-route GHZ/pairs to blocks/groups (see Qrack table).
+
 | circuit  | qubit GPU | Aer-GPU (fp32) | Aer-GPU (fp64) | Aer CPU |
 |----------|-----------|----------------|----------------|---------|
-| QFT      | 4,516     | 13,990         | 16,474         | 83,297  |
-| QAOA-4   | 3,160     | 20,779         | 19,893         | 56,050  |
-| random   | 3,490     | 23,443         | 22,953         | 51,647  |
-| GHZ      | 1,619     | 10,614         | 15,463         | 11,248  |
-| pairs    | 1,600     | 6,909          | 15,413         | 7,760   |
+| QFT      | 4,290     | 13,990         | 16,474         | 83,297  |
+| QAOA-4   | 3,935     | 20,779         | 19,893         | 56,050  |
+| random   | 4,159     | 23,443         | 22,953         | 51,647  |
+| GHZ      | 1,450     | 10,614         | 15,463         | 11,248  |
+| pairs    | 1,526     | 6,909          | 15,413         | 7,760   |
 
 qubit-GPU is 3-7x faster than Aer-GPU at matched complex64 precision.
 Caveat: these are end-to-end latencies (include state read-back and, for
@@ -70,18 +73,22 @@ gate-application only (excludes read-back, favoring Qrack).
 The planner auto-selects the backend from static analysis (no user
 action). Qrack times are gate-only (exclude read-back, favoring Qrack).
 
+Single authoritative median-5 RTX-3060 dense set (QFT 4290, QAOA 3935,
+random 4159, GHZ dense 1450, pairs dense 1526) is used across all
+tables here and in the paper.
+
 | 28q    | qubit (backend)   | Qrack   |
 |--------|-------------------|---------|
-| QFT    | 4,246 (dense-gpu) | 18,953  |
-| QAOA-4 | 3,992 (dense-gpu) | 13,665  |
-| random | 4,308 (dense-gpu) | 24,189  |
+| QFT    | 4,290 (dense-gpu) | 18,953  |
+| QAOA-4 | 3,935 (dense-gpu) | 13,665  |
+| random | 4,159 (dense-gpu) | 24,189  |
 | GHZ    | 20 (blocks-gpu)   | 0.4     |
 | pairs  | 0.08 (groups-cpu) | 0.5     |
 
 Reading (honest): the planner routes each circuit to its best backend.
 Dense circuits (QFT/QAOA/random): qubit 4-7x faster than Qrack. Pairs:
 qubit factors it (groups) and beats Qrack. GHZ: qubit's ZERO tier gives
-20ms/1MB (down from 1619ms dense) but Qrack's stabilizer tableau is
+20ms/1MB (down from 1450ms dense) but Qrack's stabilizer tableau is
 asymptotically optimal for Clifford states and wins; we don't implement
 a stabilizer backend. Net: qubit wins 4 of 5; the loss is pure-Clifford
 GHZ. Core contribution stays the DENSE regime (no structure to exploit).
@@ -93,7 +100,7 @@ Same suite on a Tesla T4 (16 GB) confirms the method is not tied to the
 3060. Correctness identical (50 GPU-vs-CPU trials + 25 exact + 25 lossy
 all pass via bench/colab_m6.sh); GHZ-31 exact in 1 MB; 28q echo
 fidelity 0.9998 with memory halving at full compression. Dense times
-~1.4-2x slower than the 3060 (older card), same qualitative behavior.
+~1.1-2x slower than the 3060 (older card), same qualitative behavior.
 
 | 28q dense | RTX 3060 | Tesla T4 |
 |-----------|----------|----------|
