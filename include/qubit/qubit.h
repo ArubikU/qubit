@@ -194,6 +194,8 @@ struct AnalyzeReport {
 	double mem_dense = 0;
 	double mem_groups = 0;
 	double mem_mps_bound = 0;
+	int split_gates = 0;	/* superposition-creating gates: bounds
+				 * nonzero amplitudes by 2^split_gates */
 
 	void print() const {
 		printf("=== qubit::analyze ===\n");
@@ -202,6 +204,8 @@ struct AnalyzeReport {
 		for (auto& g : groups) printf(" [%zu]", g.size());
 		printf("\n");
 		printf("worst cut: chi <= 2^%d\n", max_chi_log2);
+		printf("splitting gates: %d (nonzero amps <= 2^%d)\n",
+		       split_gates, split_gates);
 		printf("estimated memory:\n");
 		printf("  dense : %.1f MB\n", mem_dense  / 1048576.0);
 		printf("  groups: %.1f MB\n", mem_groups / 1048576.0);
@@ -230,6 +234,20 @@ inline AnalyzeReport analyze(const Circuit& c) {
 			int lo = std::min(ct, g.target), hi = std::max(ct, g.target);
 			for (int cut = lo; cut < hi; cut++)
 				r.cut_crossings[cut]++;
+		}
+		/*
+		 * A gate can only increase the count of nonzero amplitudes if
+		 * it is a genuine superposition (neither diagonal nor
+		 * anti-diagonal): H and RX/RY split, while X/Y/Z/S/T/RZ/phase
+		 * and controlled permutations (CNOT/CZ) map basis to basis or
+		 * only rephase. Each split at most doubles the support, so the
+		 * nonzero-amplitude count is bounded by 2^split_gates.
+		 */
+		if (g.op == Gate::Op::U1) {
+			bool diag = g.m[1] == cd(0,0) && g.m[2] == cd(0,0);
+			bool anti = g.m[0] == cd(0,0) && g.m[3] == cd(0,0);
+			if (!diag && !anti && r.split_gates < 62)
+				r.split_gates++;
 		}
 	}
 
@@ -1408,6 +1426,22 @@ inline Result run(const Circuit& c, const RunOptions& opt = {}) {
 		const double budget = budget_from_fidelity(opt.fidelity);
 		const bool want_gpu = opt.device != Device::CPU;
 		const bool want_cpu = opt.device != Device::GPU;
+
+		/*
+		 * Factorization fast path, device-independent: if the
+		 * interaction graph splits into small disjoint groups, the
+		 * factorized state is far cheaper than any dense pass on any
+		 * device (n/2 Bell pairs cost 2n amplitudes, not 2^n). Take it
+		 * whenever the group footprint is a small fraction of dense and
+		 * fits comfortably in host memory. A single large entangled
+		 * group (GHZ chain, QFT) does not trigger this and falls
+		 * through to the GPU/dense ladder below.
+		 */
+		if (rep.mem_groups * 8.0 <= need_dense &&
+		    rep.mem_groups <= opt.cpu_mem_budget * 0.5) {
+			be = std::make_shared<GroupsCPU>();
+			break;
+		}
 #ifndef QUBIT_CUDA
 		if (opt.device == Device::GPU)
 			throw Error("qubit: Device::GPU requested but the library was "
@@ -1415,6 +1449,27 @@ inline Result run(const Circuit& c, const RunOptions& opt = {}) {
 				    "nvcc -DQUBIT_CUDA)");
 #else
 		if (want_gpu && !f64) {
+			/*
+			 * Provably-sparse fast path: if the nonzero-amplitude
+			 * bound (2^split_gates) makes the tiered representation
+			 * far smaller than dense, route to blocks-gpu even when
+			 * dense fits. The ZERO tier then skips the empty blocks,
+			 * turning e.g. a GHZ chain from a full 2^n pass into a
+			 * few live blocks. Worst-case block memory is bounded
+			 * below, so this never risks an out-of-memory blowup:
+			 * circuits that are not actually sparse (QFT, random)
+			 * hit the cap and fall through to dense.
+			 */
+			const int kBshift = 16;
+			if (live > kBshift) {
+				int nz_blocks_log2 = std::min(rep.split_gates, live - kBshift);
+				double sparse_bytes = std::ldexp(8.0, nz_blocks_log2 + kBshift);
+				if (sparse_bytes * 8.0 <= need_dense &&
+				    sparse_bytes <= gpu_free_vram_bytes() * 0.5) {
+					be = make_blocks_gpu(kBshift, budget);
+					break;
+				}
+			}
 			if (need_dense <= gpu_free_vram_bytes() * 0.9) {
 				be = std::shared_ptr<Backend>(make_dense_gpu().release());
 				break;

@@ -67,22 +67,25 @@ Qrack is structure-aware (Schmidt decomposition + stabilizer), so
 low-entanglement states never densify. Times below are Qrack
 gate-application only (excludes read-back, favoring Qrack).
 
-| 28q    | qubit-GPU | Qrack   | regime     |
-|--------|-----------|---------|------------|
-| QFT    | 4,516     | 18,953  | dense      |
-| QAOA-4 | 3,160     | 13,665  | dense      |
-| random | 3,490     | 24,189  | dense      |
-| GHZ    | 1,619     | 0.4     | structured |
-| pairs  | 1,600     | 0.5     | structured |
+The planner auto-selects the backend from static analysis (no user
+action). Qrack times are gate-only (exclude read-back, favoring Qrack).
 
-Reading (honest): on structured circuits Qrack is ~1000x+ faster than
-any dense method (it stores almost nothing) — so qubit's ZERO-tier /
-groups results (GHZ-31 in 1MB, 80q clusters) are NOT a differentiator;
-MPS/stabilizer/Qrack all handle these. qubit's real contribution is the
-DENSE regime (QFT/QAOA/random), where no structure exists to exploit,
-structure-aware methods gain nothing, and qubit is 4-7x faster than
-Qrack AND compresses the dense state under a fidelity budget. Run:
-`QRACK_OCL_DEFAULT_DEVICE=0 py bench/qrack_bench.py 28`.
+| 28q    | qubit (backend)   | Qrack   |
+|--------|-------------------|---------|
+| QFT    | 4,246 (dense-gpu) | 18,953  |
+| QAOA-4 | 3,992 (dense-gpu) | 13,665  |
+| random | 4,308 (dense-gpu) | 24,189  |
+| GHZ    | 20 (blocks-gpu)   | 0.4     |
+| pairs  | 0.08 (groups-cpu) | 0.5     |
+
+Reading (honest): the planner routes each circuit to its best backend.
+Dense circuits (QFT/QAOA/random): qubit 4-7x faster than Qrack. Pairs:
+qubit factors it (groups) and beats Qrack. GHZ: qubit's ZERO tier gives
+20ms/1MB (down from 1619ms dense) but Qrack's stabilizer tableau is
+asymptotically optimal for Clifford states and wins; we don't implement
+a stabilizer backend. Net: qubit wins 4 of 5; the loss is pure-Clifford
+GHZ. Core contribution stays the DENSE regime (no structure to exploit).
+Run: `QRACK_OCL_DEFAULT_DEVICE=0 py bench/qrack_bench.py 28`.
 
 ## Cross-architecture (Tesla T4, Turing sm_75, free cloud)
 
