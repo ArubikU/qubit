@@ -622,6 +622,16 @@ public:
 	}
 	double memory_bytes() const override { return double(N_) * sizeof(C); }
 
+	/*
+	 * Raw dense amplitude buffer, at the backend's own precision (no
+	 * float narrowing, unlike state()). For algorithms that drive the
+	 * backend directly — e.g. qtrain's adjoint differentiation, which
+	 * evolves the state with apply() and reads bra/ket amplitudes here
+	 * instead of maintaining a second gate kernel. Dense backend only.
+	 */
+	std::vector<C>& buffer() { return v_; }
+	const std::vector<C>& buffer() const { return v_; }
+
 private:
 	static bool is_diag4(const cd* m) {
 		for (int i = 0; i < 4; i++)
