@@ -1,0 +1,3 @@
+[submodule "qtrain"]
+	path = qtrain
+	url = https://github.com/ArubikU/qtrain.git

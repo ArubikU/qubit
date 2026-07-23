@@ -15,4 +15,3 @@ sandbox/
 
 # benchmark scratch (keep results/ CSVs, drop stray files)
 bench/results/*.tmp
-qtrain/
