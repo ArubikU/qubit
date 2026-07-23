@@ -10,7 +10,9 @@ bin/
 paper/
 cpu/
 gpu/
+sandbox/
 *.tmp
 
 # benchmark scratch (keep results/ CSVs, drop stray files)
 bench/results/*.tmp
+qtrain/
