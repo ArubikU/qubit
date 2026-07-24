@@ -35,6 +35,21 @@ using cf = thrust::complex<float>;
 static const int TPB = 256;
 static inline int blocks(uint64_t N) { return int((N + TPB - 1) / TPB); }
 
+/* Block-level shared-memory sum -> one atomicAdd per block, instead of one
+ * atomic per element. Every thread in the block MUST call this (idle threads
+ * pass 0) so the __syncthreads line up. Assumes blockDim.x == TPB. */
+__device__ __forceinline__ void block_add(double v, double* acc) {
+	__shared__ double sh[TPB];
+	int t = threadIdx.x;
+	sh[t] = v;
+	__syncthreads();
+	for (int s = TPB / 2; s > 0; s >>= 1) {
+		if (t < s) sh[t] += sh[t + s];
+		__syncthreads();
+	}
+	if (t == 0) atomicAdd(acc, sh[0]);
+}
+
 /* ---- kernels ---- */
 __global__ void k_apply2x2(cf* s, uint64_t N, uint64_t bit, uint64_t cmask,
                            cf m0, cf m1, cf m2, cf m3) {
@@ -71,25 +86,27 @@ __global__ void k_setzero(cf* s, uint64_t N) {
 	if (i < N) s[i] = cf(0, 0);
 }
 
-/* Re<a|b> accumulation into a double */
+/* Re<a|b> accumulation, block-reduced */
 __global__ void k_redot(const cf* a, const cf* b, uint64_t N, double* acc) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N) return;
-	cf v = thrust::conj(a[i]) * b[i];
-	atomicAdd(acc, (double)v.real());
+	double v = (i < N) ? (double)(thrust::conj(a[i]) * b[i]).real() : 0.0;
+	block_add(v, acc);
 }
 
-/* Im<lambda|G|phi> over disjoint pairs -> grad term */
+/* Im<lambda|G|phi> over disjoint pairs -> grad term, block-reduced */
 __global__ void k_gradterm(const cf* L, const cf* P, uint64_t N, uint64_t bit,
                            int gen, double* acc) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N || (i & bit)) return;
-	uint64_t j = i | bit;
-	cf t;
-	if (gen == GEN_X)      t = thrust::conj(L[i]) * P[j] + thrust::conj(L[j]) * P[i];
-	else if (gen == GEN_Y) t = thrust::conj(L[i]) * (cf(0,-1) * P[j]) + thrust::conj(L[j]) * (cf(0,1) * P[i]);
-	else                   t = thrust::conj(L[i]) * P[i] + thrust::conj(L[j]) * (-P[j]);
-	atomicAdd(acc, (double)t.imag());
+	double v = 0.0;
+	if (i < N && !(i & bit)) {
+		uint64_t j = i | bit;
+		cf t;
+		if (gen == GEN_X)      t = thrust::conj(L[i]) * P[j] + thrust::conj(L[j]) * P[i];
+		else if (gen == GEN_Y) t = thrust::conj(L[i]) * (cf(0,-1) * P[j]) + thrust::conj(L[j]) * (cf(0,1) * P[i]);
+		else                   t = thrust::conj(L[i]) * P[i] + thrust::conj(L[j]) * (-P[j]);
+		v = (double)t.imag();
+	}
+	block_add(v, acc);
 }
 
 /* quantization: pass 1 max|.|, pass 2 round + accumulate err^2 */
@@ -101,12 +118,15 @@ __global__ void k_absmax(const cf* s, uint64_t N, unsigned* umax) {
 }
 __global__ void k_quant(cf* s, uint64_t N, float scale, double* err2) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N) return;
-	float re = rintf(s[i].real() / scale) * scale;
-	float im = rintf(s[i].imag() / scale) * scale;
-	float dr = s[i].real() - re, di = s[i].imag() - im;
-	atomicAdd(err2, (double)(dr * dr + di * di));
-	s[i] = cf(re, im);
+	double e = 0.0;
+	if (i < N) {
+		float re = rintf(s[i].real() / scale) * scale;
+		float im = rintf(s[i].imag() / scale) * scale;
+		float dr = s[i].real() - re, di = s[i].imag() - im;
+		e = (double)(dr * dr + di * di);
+		s[i] = cf(re, im);
+	}
+	block_add(e, err2);
 }
 
 /* =====================================================================
@@ -131,15 +151,17 @@ __device__ __forceinline__ short2 qz(cf z, float s) {
 __global__ void k16_apply2x2(short2* s, uint64_t N, uint64_t bit, uint64_t cmask,
                              cf m0, cf m1, cf m2, cf m3, float scale, double* err2) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N || (i & bit)) return;
-	if ((i & cmask) != cmask) return;
-	uint64_t j = i | bit;
-	cf a = dq(s[i], scale), b = dq(s[j], scale);
-	cf na = m0 * a + m1 * b, nb = m2 * a + m3 * b;
-	short2 qa = qz(na, scale), qb = qz(nb, scale);
-	cf da = na - dq(qa, scale), db = nb - dq(qb, scale);
-	atomicAdd(err2, (double)(thrust::norm(da) + thrust::norm(db)));
-	s[i] = qa; s[j] = qb;
+	double e = 0.0;
+	if (i < N && !(i & bit) && (i & cmask) == cmask) {
+		uint64_t j = i | bit;
+		cf a = dq(s[i], scale), b = dq(s[j], scale);
+		cf na = m0 * a + m1 * b, nb = m2 * a + m3 * b;
+		short2 qa = qz(na, scale), qb = qz(nb, scale);
+		cf da = na - dq(qa, scale), db = nb - dq(qb, scale);
+		e = (double)(thrust::norm(da) + thrust::norm(db));
+		s[i] = qa; s[j] = qb;
+	}
+	block_add(e, err2);   /* all threads participate (idle -> 0) */
 }
 __global__ void k16_generator(short2* s, uint64_t N, uint64_t bit, int gen) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
@@ -164,21 +186,23 @@ __global__ void k16_axpy(short2* lam, const short2* phi, float coeff,
 __global__ void k16_redot(const short2* a, const short2* b, float sa, float sb,
                           uint64_t N, double* acc) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N) return;
-	cf v = thrust::conj(dq(a[i], sa)) * dq(b[i], sb);
-	atomicAdd(acc, (double)v.real());
+	double v = (i < N) ? (double)(thrust::conj(dq(a[i], sa)) * dq(b[i], sb)).real() : 0.0;
+	block_add(v, acc);
 }
 __global__ void k16_gradterm(const short2* L, const short2* P, uint64_t N, uint64_t bit,
                              int gen, float sL, float sP, double* acc) {
 	uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= N || (i & bit)) return;
-	uint64_t j = i | bit;
-	cf Li = dq(L[i], sL), Lj = dq(L[j], sL), Pi = dq(P[i], sP), Pj = dq(P[j], sP);
-	cf t;
-	if (gen == GEN_X)      t = thrust::conj(Li) * Pj + thrust::conj(Lj) * Pi;
-	else if (gen == GEN_Y) t = thrust::conj(Li) * (cf(0,-1) * Pj) + thrust::conj(Lj) * (cf(0,1) * Pi);
-	else                   t = thrust::conj(Li) * Pi + thrust::conj(Lj) * (-Pj);
-	atomicAdd(acc, (double)t.imag());
+	double v = 0.0;
+	if (i < N && !(i & bit)) {
+		uint64_t j = i | bit;
+		cf Li = dq(L[i], sL), Lj = dq(L[j], sL), Pi = dq(P[i], sP), Pj = dq(P[j], sP);
+		cf t;
+		if (gen == GEN_X)      t = thrust::conj(Li) * Pj + thrust::conj(Lj) * Pi;
+		else if (gen == GEN_Y) t = thrust::conj(Li) * (cf(0,-1) * Pj) + thrust::conj(Lj) * (cf(0,1) * Pi);
+		else                   t = thrust::conj(Li) * Pi + thrust::conj(Lj) * (-Pj);
+		v = (double)t.imag();
+	}
+	block_add(v, acc);
 }
 
 /* ---- host helpers ---- */
