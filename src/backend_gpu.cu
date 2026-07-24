@@ -249,6 +249,9 @@ public:
 
 	double memory_bytes() const override { return double(N_) * sizeof(cuFloatComplex); }
 
+	/* Device state pointer for on-device algorithms (qtrain GPU adjoint). */
+	void* device_state() override { return d_v_; }
+
 private:
 	static unsigned grid(uint64_t work) { return unsigned((work + 255) / 256); }
 

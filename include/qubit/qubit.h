@@ -484,6 +484,13 @@ struct Backend {
 	/* Full amplitude vector. May be refused if materialization is absurd. */
 	virtual std::vector<cf> state() const = 0;
 
+	/* Raw device state pointer (dense GPU backend only), for on-device
+	 * algorithms that drive the backend directly — e.g. qtrain's GPU adjoint,
+	 * which evolves with apply() and reads bra/ket amplitudes here. void* to
+	 * keep CUDA types out of this header; cast to the amplitude type. Others
+	 * throw. (CPU analogue: DenseCPUT::buffer().) */
+	virtual void* device_state() { throw Error("backend has no device buffer"); }
+
 	virtual cf amplitude(uint64_t idx) const { return state()[idx]; }
 
 	/* <Z...Z> for the qubits set in mask. */

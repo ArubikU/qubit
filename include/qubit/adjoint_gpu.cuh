@@ -7,9 +7,11 @@
  * ceiling is 2 * 8 * 2^n bytes. GPUCircuitQ stores them as int16 (4 B/amp)
  * and round-trips through the int16 transform on device (Phase 3's bound).
  *
- * Circuit data model from qubit/circuit.h. This header is CUDA-only (no
- * qubit.h, no pybind), so it compiles into the qtrain binding module
- * (qubit_gpu_native) via nvcc. Include it from a .cu compiled with -arch.
+ * The dense GPUCircuit runs on qubit's DenseGPU backend (its k_apply kernel
+ * + device_state() buffer); GPUCircuitQ keeps its own int16 kernels (that
+ * compression is not in qubit's dense engine). No pybind here — the module
+ * (qubit_gpu_native) is the qtrain binding. Compile with nvcc -DQUBIT_CUDA
+ * and link src/backend_gpu.cu.
  */
 #include <thrust/complex.h>
 #include <cuda_runtime.h>
@@ -19,7 +21,8 @@
 #include <string>
 #include <cmath>
 
-#include "qubit/circuit.h"   // qubit::AGate, Gen, Term, Ham, CircuitBuilder (no qubit.h)
+#include "qubit/circuit.h"   // qubit::AGate, Gen, Term, Ham, CircuitBuilder
+#include "qubit/qubit.h"     // qubit::Backend, Gate, make_dense_gpu (needs -DQUBIT_CUDA)
 
 using qubit::AGate; using qubit::Ham; using qubit::Term;
 using qubit::GEN_NONE; using qubit::GEN_X; using qubit::GEN_Y; using qubit::GEN_Z;
@@ -201,37 +204,40 @@ struct DevAccum {
 	double get() { double h; CUDA_OK(cudaMemcpy(&h, d, sizeof(double), cudaMemcpyDeviceToHost)); return h; }
 };
 
+/*
+ * Dense GPU adjoint that RUNS ON qubit's GPU engine: the unitary evolution
+ * (forward gates and their inverses) goes through qubit::DenseGPU::apply()
+ * — the library's k_apply kernel — and the two trajectories are qubit's own
+ * device buffers (exposed via Backend::device_state()). Only the
+ * training-specific arithmetic (H|phi>, the bra/ket gradient dot, the int16
+ * round-trip) is done by the small kernels here, on qubit's buffers. This is
+ * the GPU analogue of the CPU ACircuit (which runs on DenseCPUT).
+ */
 class GPUCircuit : public qubit::CircuitBuilder {
 public:
 	using qubit::CircuitBuilder::CircuitBuilder;
 
-	/* levels<=0 => exact; else compress phi/lambda each boundary.
-	   returns (value, grad, D). */
 	std::tuple<double, std::vector<double>, double>
 	run(const Ham& H, int levels) {
 		const uint64_t N = uint64_t(1) << n_;
 		const int B = blocks(N);
-		cf *phi, *lambda;
-		CUDA_OK(cudaMalloc(&phi, N * sizeof(cf)));
-		CUDA_OK(cudaMalloc(&lambda, N * sizeof(cf)));
+		auto phi_be = qubit::make_dense_gpu();  phi_be->init(n_);
+		auto lam_be = qubit::make_dense_gpu();  lam_be->init(n_);
 
-		/* forward: phi = U|0> */
-		k_setzero<<<B, TPB>>>(phi, N);
-		{ cf one(1, 0); CUDA_OK(cudaMemcpy(phi, &one, sizeof(cf), cudaMemcpyHostToDevice)); }
-		for (auto& g : gates_) apply_gate(phi, g, N);
+		/* forward: phi = U|0> via qubit's gate kernel */
+		for (auto& g : gates_) phi_be->apply(to_qgate(g, false));
+		cf* phi    = reinterpret_cast<cf*>(phi_be->device_state());
+		cf* lambda = reinterpret_cast<cf*>(lam_be->device_state());
 
 		DevAccum acc;
-		/* lambda = H|phi>, built WITHOUT a third buffer: apply each term's
-		   Pauli string to phi in place, axpy into lambda, then re-apply to
-		   restore phi (Paulis are involutions). Peak stays at 2 states, so
-		   the dense ceiling is 2*8*2^n bytes. */
+		/* lambda = H|phi>, no third buffer: Pauli-string on phi in place,
+		   axpy into lambda, restore phi (Paulis are involutions). */
 		k_setzero<<<B, TPB>>>(lambda, N);
 		for (auto& t : H) {
 			for (auto& op : t.ops) k_generator<<<B, TPB>>>(phi, N, uint64_t(1) << op.first, op.second);
 			k_axpy<<<B, TPB>>>(lambda, phi, (float)t.coeff, N);
 			for (auto& op : t.ops) k_generator<<<B, TPB>>>(phi, N, uint64_t(1) << op.first, op.second);
 		}
-		/* value = <phi|H|phi> = Re<phi|lambda> */
 		acc.zero();
 		k_redot<<<B, TPB>>>(phi, lambda, N, acc.d);
 		double value = acc.get();
@@ -245,28 +251,30 @@ public:
 				k_gradterm<<<B, TPB>>>(lambda, phi, N, uint64_t(1) << g.q, g.gen, acc.d);
 				grad[g.pidx] = acc.get();
 			}
-			apply_gate_inv(phi, g, N);
-			apply_gate_inv(lambda, g, N);
+			qubit::Gate ig = to_qgate(g, true);
+			phi_be->apply(ig);
+			lam_be->apply(ig);
 			if (levels > 0) { D += quantize(phi, N, levels); D += quantize(lambda, N, levels); }
 		}
-		CUDA_OK(cudaFree(phi));
-		CUDA_OK(cudaFree(lambda));
 		return {value, grad, D};
 	}
 
 private:
-	void apply_gate(cf* s, const AGate& g, uint64_t N) {
-		cf m[4];
-		if (g.gen != GEN_NONE) rot_cf(g.gen, g.theta, m); else mat_cf(g, m);
-		uint64_t cmask = 0; for (int c : g.ctrl) cmask |= uint64_t(1) << c;
-		k_apply2x2<<<blocks(N), TPB>>>(s, N, uint64_t(1) << g.q, cmask, m[0], m[1], m[2], m[3]);
-	}
-	void apply_gate_inv(cf* s, const AGate& g, uint64_t N) {
-		cf m[4];
-		if (g.gen != GEN_NONE) rot_cf(g.gen, -g.theta, m);
-		else { cf tmp[4]; mat_cf(g, tmp); dagger_cf(tmp, m); }
-		uint64_t cmask = 0; for (int c : g.ctrl) cmask |= uint64_t(1) << c;
-		k_apply2x2<<<blocks(N), TPB>>>(s, N, uint64_t(1) << g.q, cmask, m[0], m[1], m[2], m[3]);
+	/* AGate -> qubit::Gate (matrix + controls); inverse = dagger / -theta */
+	static qubit::Gate to_qgate(const AGate& g, bool inverse) {
+		qubit::Gate q;
+		q.target = g.q;
+		q.controls = g.ctrl;
+		if (g.gen != GEN_NONE) {
+			qubit::cd m[4]; qubit::rot_matrix(g.gen, inverse ? -g.theta : g.theta, m);
+			for (int i = 0; i < 4; i++) q.m[i] = m[i];
+		} else if (inverse) {
+			qubit::cd m[4]; qubit::dagger(g.m, m);
+			for (int i = 0; i < 4; i++) q.m[i] = m[i];
+		} else {
+			for (int i = 0; i < 4; i++) q.m[i] = g.m[i];
+		}
+		return q;
 	}
 	double quantize(cf* s, uint64_t N, int levels) {
 		unsigned* umax; CUDA_OK(cudaMalloc(&umax, sizeof(unsigned)));
